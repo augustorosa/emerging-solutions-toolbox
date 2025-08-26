@@ -288,15 +288,50 @@ def print_nsc_results(table,note_id,flag):
 @st.cache_data
 def get_schemas(database):
     catalog = st.session_state.catalog_info
-    schemas = [obj["schema"] for obj in catalog[database]]
-    return schemas
+    # Try cached catalog first
+    if database in catalog:
+        schemas = [obj["schema"] for obj in catalog[database] if obj["schema"]]
+        if len(schemas) > 0:
+            return schemas
+    # Fallback: query Snowflake directly and refresh catalog entry
+    try:
+        session = st.session_state.session
+        sch_df = session.sql(f"SHOW SCHEMAS IN {database}").to_pandas()
+        sch_df = sch_df[sch_df["name"].str.lower() != "information_schema"]
+        schemas = [str(n) for n in sch_df["name"].tolist()]
+        st.session_state.catalog_info[database] = [{"schema": s, "tables": []} for s in schemas]
+        return schemas
+    except Exception:
+        return []
 
 @st.cache_data
 def get_tables(database, schema):
     catalog = st.session_state.catalog_info
-    tables = [obj["tables"] for obj in catalog[database] if obj["schema"] == schema]
-    tables = list(dict.fromkeys(tables[0]))
-    return tables
+    # Try cached catalog first
+    if database in catalog:
+        schema_entries = [obj for obj in catalog[database] if obj["schema"] == schema]
+        if len(schema_entries) > 0 and len(schema_entries[0]["tables"]) > 0:
+            tables = list(dict.fromkeys(schema_entries[0]["tables"]))
+            return tables
+    # Fallback: query Snowflake directly and refresh catalog entry
+    try:
+        session = st.session_state.session
+        tbl_df = session.sql(f"SHOW TABLES IN {database}.{schema}").to_pandas()
+        tables = [str(t) for t in tbl_df["name"].tolist() if pd.notna(t)]
+        # Update catalog_info for this schema
+        existing = st.session_state.catalog_info.get(database, [])
+        updated = False
+        for obj in existing:
+            if obj["schema"] == schema:
+                obj["tables"] = tables
+                updated = True
+                break
+        if not updated:
+            existing.append({"schema": schema, "tables": tables})
+        st.session_state.catalog_info[database] = existing
+        return tables
+    except Exception:
+        return []
 
 def pag_up(tab):
     interval = st.session_state.pag_interval
