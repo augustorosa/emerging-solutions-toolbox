@@ -316,11 +316,54 @@ class table_metrics(Page):
                 table_path = f"{sel_db}.{sel_schema}.{selected_table}"
                 if st.button("Evaluate Expectations", type="primary"):
                     try:
-                        eval_df = session.sql(f"SELECT * FROM TABLE(SYSTEM$EVALUATE_DATA_QUALITY_EXPECTATIONS(REF_ENTITY_NAME => '{table_path}'))").to_pandas()
+                        eval_df = session.sql(
+                            f"SELECT * FROM TABLE(SYSTEM$EVALUATE_DATA_QUALITY_EXPECTATIONS(REF_ENTITY_NAME => '{table_path}'))"
+                        ).to_pandas()
                         if len(eval_df) == 0:
                             st.success("No expectations found or no violations at this time.")
                         else:
-                            st.dataframe(eval_df, use_container_width=True)
+                            # Build filters if standard columns are present
+                            metric_col = "METRIC_NAME" if "METRIC_NAME" in eval_df.columns else None
+                            arg_col = "ARGUMENT_NAMES" if "ARGUMENT_NAMES" in eval_df.columns else None
+                            expect_name_col = "EXPECTATION_NAME" if "EXPECTATION_NAME" in eval_df.columns else None
+
+                            f1, f2, f3 = st.columns(3)
+                            selected_metrics = []
+                            selected_args = []
+                            selected_expect_names = []
+
+                            if metric_col:
+                                metrics = sorted([m for m in eval_df[metric_col].dropna().unique().tolist()])
+                                selected_metrics = f1.multiselect("Filter by DMF", metrics)
+
+                            if arg_col:
+                                # ARGUMENT_NAMES is typically a JSON string list; normalize to string for filtering
+                                arg_values = eval_df[arg_col].astype(str).dropna().unique().tolist()
+                                arg_values = sorted(arg_values)
+                                selected_args = f2.multiselect("Filter by Column(s)", arg_values)
+
+                            if expect_name_col:
+                                names = sorted([n for n in eval_df[expect_name_col].dropna().unique().tolist()])
+                                selected_expect_names = f3.multiselect("Filter by Expectation", names)
+
+                            filtered_df = eval_df.copy()
+                            if metric_col and selected_metrics:
+                                filtered_df = filtered_df[filtered_df[metric_col].isin(selected_metrics)]
+                            if arg_col and selected_args:
+                                filtered_df = filtered_df[filtered_df[arg_col].astype(str).isin(selected_args)]
+                            if expect_name_col and selected_expect_names:
+                                filtered_df = filtered_df[filtered_df[expect_name_col].isin(selected_expect_names)]
+
+                            st.dataframe(filtered_df, use_container_width=True)
+
+                            # CSV export of filtered results
+                            csv_bytes = filtered_df.to_csv(index=False).encode("utf-8")
+                            st.download_button(
+                                label="Download CSV",
+                                data=csv_bytes,
+                                file_name=f"expectation_evaluation_{sel_db}_{sel_schema}_{selected_table}.csv",
+                                mime="text/csv",
+                            )
                     except Exception as e:
                         st.warning("Could not evaluate expectations. Ensure privileges and Enterprise features are enabled.")
 

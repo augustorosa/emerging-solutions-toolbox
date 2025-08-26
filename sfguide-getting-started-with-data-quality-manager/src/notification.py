@@ -32,7 +32,7 @@ class NotificationPage(Page):
             id = note[0]
             read = note[7]
             type = note[6]
-            if read is 'pending review':
+            if read == 'pending review':
                 self.read_note(id,type)
     
     def read_note(self,note_id, note_type):

@@ -31,7 +31,7 @@ class Main_Page(Page):
             id = note[0]
             read = note[7]
             type = note[6]
-            if read is 'pending review':
+            if read == 'pending review':
                 self.read_note(id,type)
 
     def execute_job(self,job):
