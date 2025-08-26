@@ -734,20 +734,68 @@ class DQCheckPage(Page):
             # st.write(st.session_state.dq_nonstat_specs)
             b1.button("Schedule check", on_click=change_page, args=('schedule_check',))
             if b2.button("Run check", type="primary"):
-                with st.spinner("Running...."):
-                    anom_detect_output = session.call(
-                        f"{APP_OPP_DB}.{APP_CONFIG_SCHEMA}.{st.session_state.non_stat_proc}",
-                        "",
-                        st.session_state.dq_nonstat_specs
-                    )
-                    # anom_detect_output = { "JOB_ID": -1, "JOB_NAME": "", "PARTITION_COLUMNS": [ "CAT01", "CAT02" ], "QUALIFIED_RESULT_TBL_NM": "DATA_QUALITY.TEMPORARY_DQ_OBJECTS.TEMP_2024_01_31_13_12_04_ANOM_DETECT_RESULTS_5587", "RESULT_DB": "DATA_QUALITY", "RESULT_SCHEMA": "TEMPORARY_DQ_OBJECTS", "RESULT_TBL_NM": "TEMP_2024_01_31_13_12_04_ANOM_DETECT_RESULTS_5587", "UDTF_NM": "TEMPORARY_DQ_OBJECTS.perform_anom_detection_2024_01_31_13_12_04_udtf_5587" }
-                    st.success("Check Run Successfully!")
-                    results_table = json.loads(anom_detect_output)["RESULT_TBL_NM"]
-                    results = sql_to_pandas(
-                        f"SELECT *,(JOB_ID||'_'||RUN_DATETIME) AS RUN_KEY FROM {APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}")
-                    st.write(results)
-                    r_key = results["RUN_KEY"][0]
-                    print_nsc_results(f"{APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}", r_key, 0)
+                # Validate selections
+                required = [
+                    st.session_state.get('a_database'), st.session_state.get('a_schema'), st.session_state.get('a_table'),
+                    st.session_state.get('b_database'), st.session_state.get('b_schema'), st.session_state.get('b_table')
+                ]
+                if any(x in (None, "") for x in required):
+                    st.error("Please select control and comparison database/schema/table before running.")
+                elif any(("," in str(x)) for x in required):
+                    st.error("Selections contain commas. Please choose a single database/schema/table for each side.")
+                elif len(dq_checks) == 0:
+                    st.error("Select at least one check to run.")
+                else:
+                    # Normalize spec fields to avoid None values in the sproc
+                    specs = dict(st.session_state.dq_nonstat_specs)
+                    def _as_list_str(val):
+                        try:
+                            return [str(v) for v in val]
+                        except Exception:
+                            return []
+                    specs["TABLE_A_FILTER"] = str(specs.get("TABLE_A_FILTER") or "")
+                    specs["TABLE_B_FILTER"] = str(specs.get("TABLE_B_FILTER") or "")
+                    specs["TABLE_A_DB_NAME"] = str(specs.get("TABLE_A_DB_NAME") or "").strip()
+                    specs["TABLE_A_SCHEMA_NAME"] = str(specs.get("TABLE_A_SCHEMA_NAME") or "").strip()
+                    specs["TABLE_A_NAME"] = str(specs.get("TABLE_A_NAME") or "").strip()
+                    specs["TABLE_B_DB_NAME"] = str(specs.get("TABLE_B_DB_NAME") or "").strip()
+                    specs["TABLE_B_SCHEMA_NAME"] = str(specs.get("TABLE_B_SCHEMA_NAME") or "").strip()
+                    specs["TABLE_B_NAME"] = str(specs.get("TABLE_B_NAME") or "").strip()
+                    specs["TABLE_A_RECORD_ID_COLUMNS"] = _as_list_str(specs.get("TABLE_A_RECORD_ID_COLUMNS") or [])
+                    specs["TABLE_A_PARTITION_COLUMNS"] = _as_list_str(specs.get("TABLE_A_PARTITION_COLUMNS") or [])
+                    specs["TABLE_B_RECORD_ID_COLUMNS"] = _as_list_str(specs.get("TABLE_B_RECORD_ID_COLUMNS") or [])
+                    specs["TABLE_B_PARTITION_COLUMNS"] = _as_list_str(specs.get("TABLE_B_PARTITION_COLUMNS") or [])
+                    checks_norm = []
+                    for c in specs.get("CHECKS", []):
+                        c2 = dict(c)
+                        for key in ("TABLE_A_COLUMNS", "TABLE_B_COLUMNS"):
+                            if key in c2:
+                                c2[key] = _as_list_str(c2.get(key) or [])
+                        if "ALERT_THRESHOLD" in c2:
+                            try:
+                                c2["ALERT_THRESHOLD"] = [float(x) for x in c2["ALERT_THRESHOLD"]]
+                            except Exception:
+                                c2["ALERT_THRESHOLD"] = []
+                        checks_norm.append(c2)
+                    specs["CHECKS"] = checks_norm
+
+                    try:
+                        with st.spinner("Running...."):
+                            anom_detect_output = session.call(
+                                f"{APP_OPP_DB}.{APP_CONFIG_SCHEMA}.{st.session_state.non_stat_proc}",
+                                "",
+                                specs
+                            )
+                            st.success("Check Run Successfully!")
+                            results_table = json.loads(anom_detect_output)["RESULT_TBL_NM"]
+                            results = sql_to_pandas(
+                                f"SELECT *,(JOB_ID||'_'||RUN_DATETIME) AS RUN_KEY FROM {APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}")
+                            st.write(results)
+                            r_key = results["RUN_KEY"][0]
+                            print_nsc_results(f"{APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}", r_key, 0)
+                    except Exception as e:
+                        st.warning("Non-stat check failed. Verify inputs and privileges.")
+                        st.exception(e)
 
 
 
