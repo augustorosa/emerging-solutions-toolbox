@@ -285,7 +285,7 @@ def print_nsc_results(table,note_id,flag):
         st.dataframe(c_seven,use_container_width=True)
 
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def get_schemas(database):
     catalog = st.session_state.catalog_info
     # Try cached catalog first
@@ -296,7 +296,7 @@ def get_schemas(database):
     # Fallback: query Snowflake directly and refresh catalog entry
     try:
         session = st.session_state.session
-        sch_df = session.sql(f"SHOW SCHEMAS IN {database}").to_pandas()
+        sch_df = session.sql(f"SHOW SCHEMAS IN DATABASE {database}").to_pandas()
         sch_df = sch_df[sch_df["name"].str.lower() != "information_schema"]
         schemas = [str(n) for n in sch_df["name"].tolist()]
         st.session_state.catalog_info[database] = [{"schema": s, "tables": []} for s in schemas]
@@ -304,7 +304,7 @@ def get_schemas(database):
     except Exception:
         return []
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def get_tables(database, schema):
     catalog = st.session_state.catalog_info
     # Try cached catalog first
@@ -316,7 +316,7 @@ def get_tables(database, schema):
     # Fallback: query Snowflake directly and refresh catalog entry
     try:
         session = st.session_state.session
-        tbl_df = session.sql(f"SHOW TABLES IN {database}.{schema}").to_pandas()
+        tbl_df = session.sql(f"SHOW TABLES IN SCHEMA {database}.{schema}").to_pandas()
         tables = [str(t) for t in tbl_df["name"].tolist() if pd.notna(t)]
         # Update catalog_info for this schema
         existing = st.session_state.catalog_info.get(database, [])
