@@ -708,18 +708,38 @@ class Main_Page(Page):
             space, b1,b2 = st.columns((20,3,2))
             b1.button("Schedule check", on_click=change_page, args=('schedule_check',))
             if b2.button("Run check", type= "primary"):
-                anom_detect_output = session.call(
-                f"{APP_OPP_DB}.{APP_CONFIG_SCHEMA}.{st.session_state.anomoly_proc}",
-                "",
-                st.session_state.dq_anomaly_specs
-                )
-                # anom_detect_output = { "JOB_ID": -1, "JOB_NAME": "", "PARTITION_COLUMNS": [ "CAT01", "CAT02" ], "QUALIFIED_RESULT_TBL_NM": "DATA_QUALITY.TEMPORARY_DQ_OBJECTS.TEMP_2024_01_31_13_12_04_ANOM_DETECT_RESULTS_5587", "RESULT_DB": "DATA_QUALITY", "RESULT_SCHEMA": "TEMPORARY_DQ_OBJECTS", "RESULT_TBL_NM": "TEMP_2024_01_31_13_12_04_ANOM_DETECT_RESULTS_5587", "UDTF_NM": "TEMPORARY_DQ_OBJECTS.perform_anom_detection_2024_01_31_13_12_04_udtf_5587" }
-                st.success("Check Run Successfully!")
-                results_table = json.loads(anom_detect_output)["RESULT_TBL_NM"]
-                results = session.sql(f"SELECT *,(JOB_ID||'_'||RUN_DATETIME) AS RUN_KEY FROM {APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}").to_pandas()
-                # st.write(results)
-                r_key = results["RUN_KEY"][0]
-                get_anomaly_chart(f"{APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}",r_key, 0)
+                # Validate required selections
+                if not chosen_db or not chosen_schema or not chosen_table:
+                    st.error("Select a single database, schema, and table before running.")
+                elif any(("," in str(x)) for x in [chosen_db, chosen_schema, chosen_table]):
+                    st.error("Selections contain commas. Please choose a single database/schema/table.")
+                else:
+                    # Normalize list-typed fields to plain strings
+                    try:
+                        specs = dict(st.session_state.dq_anomaly_specs)
+                        specs["TABLE_B_DB_NAME"] = str(specs["TABLE_B_DB_NAME"]).strip()
+                        specs["TABLE_B_SCHEMA_NAME"] = str(specs["TABLE_B_SCHEMA_NAME"]).strip()
+                        specs["TABLE_B_NAME"] = str(specs["TABLE_B_NAME"]).strip()
+                        specs["TABLE_B_RECORD_ID_COLUMNS"] = [str(c) for c in specs["TABLE_B_RECORD_ID_COLUMNS"]]
+                        specs["TABLE_B_PARTITION_COLUMNS"] = [str(c) for c in specs["TABLE_B_PARTITION_COLUMNS"]]
+                        for c in specs["CHECKS"]:
+                            if "TABLE_B_COLUMNS" in c:
+                                c["TABLE_B_COLUMNS"] = [str(col) for col in c["TABLE_B_COLUMNS"]]
+                    except Exception:
+                        specs = st.session_state.dq_anomaly_specs
+
+                    anom_detect_output = session.call(
+                    f"{APP_OPP_DB}.{APP_CONFIG_SCHEMA}.{st.session_state.anomoly_proc}",
+                    "",
+                    specs
+                    )
+                    # anom_detect_output = { "JOB_ID": -1, "JOB_NAME": "", "PARTITION_COLUMNS": [ "CAT01", "CAT02" ], "QUALIFIED_RESULT_TBL_NM": "DATA_QUALITY.TEMPORARY_DQ_OBJECTS.TEMP_2024_01_31_13_12_04_ANOM_DETECT_RESULTS_5587", "RESULT_DB": "DATA_QUALITY", "RESULT_SCHEMA": "TEMPORARY_DQ_OBJECTS", "RESULT_TBL_NM": "TEMP_2024_01_31_13_12_04_ANOM_DETECT_RESULTS_5587", "UDTF_NM": "TEMPORARY_DQ_OBJECTS.perform_anom_detection_2024_01_31_13_12_04_udtf_5587" }
+                    st.success("Check Run Successfully!")
+                    results_table = json.loads(anom_detect_output)["RESULT_TBL_NM"]
+                    results = session.sql(f"SELECT *,(JOB_ID||'_'||RUN_DATETIME) AS RUN_KEY FROM {APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}").to_pandas()
+                    # st.write(results)
+                    r_key = results["RUN_KEY"][0]
+                    get_anomaly_chart(f"{APP_OPP_DB}.{APP_TEMP_DATA_SCHEMA}.{results_table}",r_key, 0)
 
     def run_SCTab(self):
         
