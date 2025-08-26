@@ -27,7 +27,7 @@ from src.Page import set_page
 from dotenv import load_dotenv
 
 # Add all databases you wish the access to this array
-st.session_state.databases = ["DATA_QUALITY"]
+st.session_state.databases = ["DATA_QUALITY", "ARCHETYPE", "ADVENTURE_WORKS_DW", "ADVENTURE_WORKS_RAW"]
 
 load_dotenv(override=True)
 st.session_state["streamlit_mode"] = "SiS"
@@ -134,6 +134,12 @@ with st.sidebar:
     st.button("Manual DMF Metrics", key='metrics_page', use_container_width=True, on_click = set_page, args=('metrics_page',))
 
     st.button("Table DMF Metrics", key='table_metrics', use_container_width=True, on_click = set_page, args=('table_metrics',))
+
+    # Allow users to rebuild the catalog when database allowlist changes or privileges change
+    if st.button("Reload catalog", use_container_width=True):
+        if 'catalog_info' in st.session_state:
+            del st.session_state['catalog_info']
+        st.rerun()
 
 
 
