@@ -107,8 +107,8 @@ class table_metrics(Page):
                 dmf_name_options = []
                 dmf_table_options = []
 
-            dmf_name_filter = col1.selectbox('DMF', options=dmf_name_options, placeholder='All')
-            dmf_table_filter = col2.selectbox('Table', options=dmf_table_options, placeholder='All')
+            dmf_name_filter = col1.selectbox('DMF', options=dmf_name_options, index=0) if len(dmf_name_options) > 0 else 'All'
+            dmf_table_filter = col2.selectbox('Table', options=dmf_table_options, index=0) if len(dmf_table_options) > 0 else 'All'
             issues_found_filter = col3.selectbox('Expectations', options= ['Failed', 'All'])
 
 
@@ -303,7 +303,10 @@ class table_metrics(Page):
                 db_lookup = {}
 
             manual_db, manual_schema, manual_table = st.columns(3)
-            selected_table = st.selectbox("Select Table (from scheduled metrics)", options=tables if len(tables) > 0 else [], placeholder="Choose...")
+            if len(tables) > 0:
+                selected_table = st.selectbox("Select Table (from scheduled metrics)", options=tables)
+            else:
+                selected_table = ""
             if selected_table:
                 sel_db = db_lookup.get(selected_table, "")
                 sel_schema = schema_lookup.get(selected_table, "")
