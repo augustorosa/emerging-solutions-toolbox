@@ -23,7 +23,7 @@ class table_metrics(Page):
         col_h1, col_h2, col_h3 = st.columns([8,1,1])
         col_h1.subheader('Data Metrics Monitoring')
         if col_h3.button('↻'):
-                st.rerun()
+                st.experimental_rerun()
 
         with st.expander("Raw Results"):
                 try:

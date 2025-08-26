@@ -139,7 +139,7 @@ with st.sidebar:
     if st.button("Reload catalog", use_container_width=True):
         if 'catalog_info' in st.session_state:
             del st.session_state['catalog_info']
-        st.rerun()
+        st.experimental_rerun()
 
 
 
