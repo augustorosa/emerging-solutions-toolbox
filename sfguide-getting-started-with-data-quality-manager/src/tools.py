@@ -160,7 +160,8 @@ def get_anomaly_chart(table,note_id,flag):
     )  # Set x-axis ticks as vertical percentages
     plt.ylim(y_min, y_max)
 
-    st.plotly_chart(figure)
+    # Render matplotlib figure correctly in Streamlit
+    st.pyplot(figure)
 
 def print_nsc_results(table,note_id,flag):
     session = st.session_state.session

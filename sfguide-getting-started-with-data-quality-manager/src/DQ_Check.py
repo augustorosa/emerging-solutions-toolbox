@@ -56,8 +56,8 @@ class DQCheckPage(Page):
     def print_page(self):
         session = st.session_state.session
 
-        st.session_state.a_r_id_columns = ""
-        st.session_state.b_r_id_columns = ""
+        st.session_state.a_r_id_columns = []
+        st.session_state.b_r_id_columns = []
         databases = st.session_state.databases
         st.subheader("Select your data check")
         check_type = st.selectbox('', ["Column Value Check","Native Snowflake Checks","Anomaly detection", "Non-statistical data quality check"])

@@ -26,10 +26,14 @@ class table_metrics(Page):
                 st.rerun()
 
         with st.expander("Raw Results"):
-                dmf_results = session.sql("SELECT * FROM SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS").to_pandas()
-                st.dataframe(dmf_results)
+                try:
+                    dmf_results = session.sql("SELECT * FROM SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS").to_pandas()
+                    st.dataframe(dmf_results)
+                except Exception:
+                    dmf_results = pd.DataFrame()
+                    st.info("DATA_QUALITY_MONITORING_RESULTS is not accessible. Ensure your account has the DMFs/Expectations feature and role has SELECT on SNOWFLAKE.LOCAL.")
 
-        t1,t2 = st.tabs(("Metrics Monitoring","Metric Scan Results"))
+        t1,t2,t3 = st.tabs(("Metrics Monitoring","Metric Scan Results","Expectations"))
         with t1:
             col1, col2, col3 = st.columns([1,1,1])
 
@@ -83,7 +87,11 @@ class table_metrics(Page):
 
 
             # Load the DataFrame
-            METRICS_DF = LOAD_RECENT_METRICS()
+            try:
+                METRICS_DF = LOAD_RECENT_METRICS()
+            except Exception:
+                METRICS_DF = pd.DataFrame()
+                st.info("Recent metrics are unavailable. Check access to SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS and that DMFs are running.")
 
             # Function to add 'ALL' option to the unique values list
             def add_all_option(unique_values):
@@ -253,7 +261,10 @@ class table_metrics(Page):
 
 
 
-            tables = dmf_results["TABLE_NAME"].unique()
+            try:
+                tables = dmf_results["TABLE_NAME"].unique()
+            except Exception:
+                tables = []
             chosen_table = st.selectbox("Select Table", tables)
             if chosen_table:
                 active = True
@@ -278,5 +289,84 @@ class table_metrics(Page):
                         else:
                             st.error(f"{len(offending_rows)} Found")
                             st.dataframe(offending_rows)
+
+        with t3:
+            st.subheader("Evaluate expectations now")
+            # Reuse tables from dmf_results if available; otherwise, allow manual input
+            try:
+                tables = dmf_results["TABLE_NAME"].unique()
+                schema_lookup = dmf_results.set_index("TABLE_NAME")["TABLE_SCHEMA"].to_dict()
+                db_lookup = dmf_results.set_index("TABLE_NAME")["TABLE_DATABASE"].to_dict()
+            except Exception:
+                tables = []
+                schema_lookup = {}
+                db_lookup = {}
+
+            manual_db, manual_schema, manual_table = st.columns(3)
+            selected_table = st.selectbox("Select Table (from scheduled metrics)", options=tables if len(tables) > 0 else [], placeholder="Choose...")
+            if selected_table:
+                sel_db = db_lookup.get(selected_table, "")
+                sel_schema = schema_lookup.get(selected_table, "")
+            else:
+                sel_db = manual_db.text_input("Database")
+                sel_schema = manual_schema.text_input("Schema")
+                selected_table = manual_table.text_input("Table")
+
+            if sel_db and sel_schema and selected_table:
+                table_path = f"{sel_db}.{sel_schema}.{selected_table}"
+                if st.button("Evaluate Expectations", type="primary"):
+                    try:
+                        eval_df = session.sql(f"SELECT * FROM TABLE(SYSTEM$EVALUATE_DATA_QUALITY_EXPECTATIONS(REF_ENTITY_NAME => '{table_path}'))").to_pandas()
+                        if len(eval_df) == 0:
+                            st.success("No expectations found or no violations at this time.")
+                        else:
+                            st.dataframe(eval_df, use_container_width=True)
+                    except Exception as e:
+                        st.warning("Could not evaluate expectations. Ensure privileges and Enterprise features are enabled.")
+
+            st.divider()
+            st.subheader("Expectation status (read-only)")
+            st.caption("Showing recent expectation evaluations from SNOWFLAKE.LOCAL if available")
+            # Try the expectation status view first; fallback to RAW table if needed
+            try:
+                exp_status = session.sql(
+                    """
+                    select 
+                        TABLE_DATABASE, TABLE_SCHEMA, TABLE_NAME,
+                        METRIC_NAME,
+                        ARGUMENT_NAMES,
+                        EXPECTATION_NAME,
+                        EXPECTATION_EXPRESSION,
+                        MEASUREMENT_TIME,
+                        VIOLATED
+                    from SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_EXPECTATION_STATUS
+                    where timediff(day, MEASUREMENT_TIME, current_timestamp()) < 14
+                    order by MEASUREMENT_TIME desc
+                    """
+                ).to_pandas()
+                st.dataframe(exp_status, use_container_width=True)
+            except Exception:
+                try:
+                    raw = session.sql(
+                        """
+                        select 
+                          resource_attributes:object_database::string as TABLE_DATABASE,
+                          resource_attributes:object_schema::string as TABLE_SCHEMA,
+                          resource_attributes:object_name::string as TABLE_NAME,
+                          resource_attributes:metric_name::string as METRIC_NAME,
+                          resource_attributes:argument_names::string as ARGUMENT_NAMES,
+                          resource_attributes:expectation_name::string as EXPECTATION_NAME,
+                          resource_attributes:expectation_expression::string as EXPECTATION_EXPRESSION,
+                          measurement_time as MEASUREMENT_TIME,
+                          value::boolean as VIOLATED
+                        from SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS_RAW
+                        where resource_attributes:snow.data_metric.record_type::string = 'EXPECTATION_VIOLATION_STATUS'
+                          and timediff(day, MEASUREMENT_TIME, current_timestamp()) < 14
+                        order by MEASUREMENT_TIME desc
+                        """
+                    ).to_pandas()
+                    st.dataframe(raw, use_container_width=True)
+                except Exception:
+                    st.info("Expectation status views are not accessible. Ensure account has Enterprise features and required privileges.")
     def print_sidebar(self):
         pass

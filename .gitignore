@@ -137,3 +137,7 @@ dmypy.json
 # Quarto site
 docs/_site
 /.quarto/
+
+
+# Planning
+planning/

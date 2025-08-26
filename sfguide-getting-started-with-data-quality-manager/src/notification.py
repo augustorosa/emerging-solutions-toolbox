@@ -139,16 +139,65 @@ class NotificationPage(Page):
                 UNION
                 SELECT (JOB_ID||'_'||RUN_DATETIME) AS RUN_KEY ,JOB_ID, RUN_DATETIME, COUNT(*), '' as CONTROL_TBL_NM {dmf_alert_field}, 'SNOWFLAKE_DMF' as CHECK_TYPE, ALERT_STATUS 
                 FROM {APP_OPP_DB}.{APP_RESULTS_SCHEMA}.DQ_SNOWFLAKE_DMF_RESULTS M 
-                WHERE CONTROL_TBL_NM ILIKE '%{search}%'
+                WHERE ('') ILIKE '%{search}%'
                 and JOB_ID ilike '{job_id_f}'
                 {alert_flag}
                 and (ALERT_STATUS {show})
                 AND RUN_DATETIME >= CONCAT('{start_date}', ' 00:00:00')
                 AND RUN_DATETIME <= CONCAT('{end_date}', ' 23:59:59')
-                GROUP BY JOB_ID,CONTROL_TBL_NM,RUN_DATETIME {alert_grouper}, ALERT_STATUS order by ALERT_STATUS DESC, RUN_DATETIME DESC 
+                GROUP BY JOB_ID,CONTROL_TBL_NM,RUN_DATETIME {alert_grouper}, ALERT_STATUS
+                order by ALERT_STATUS DESC, RUN_DATETIME DESC 
                 """)
         # st.write(notifications)
         notifications = sql_to_dataframe(notifications)
+
+        # Append expectation violations from SNOWFLAKE.LOCAL (read-only). If unavailable, skip silently.
+        try:
+            exp_sql = f"""
+            SELECT 
+              ('EXPECT_' || to_varchar(MEASUREMENT_TIME)) AS RUN_KEY,
+              '' AS JOB_ID,
+              MEASUREMENT_TIME AS RUN_DATETIME,
+              COUNT(*) AS COUNT,
+              (TABLE_SCHEMA||'.'||TABLE_NAME) AS CONTROL_TBL_NM,
+              IFF(SUM(IFF(VIOLATED,1,0))>0,1,0) AS ALERT_FLAG,
+              'EXPECTATION' as CHECK_TYPE,
+              NULL as ALERT_STATUS
+            FROM SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_EXPECTATION_STATUS
+            WHERE (TABLE_SCHEMA||'.'||TABLE_NAME) ILIKE '%{search}%'
+              AND MEASUREMENT_TIME >= CONCAT('{start_date}', ' 00:00:00')::timestamp
+              AND MEASUREMENT_TIME <= CONCAT('{end_date}', ' 23:59:59')::timestamp
+            GROUP BY MEASUREMENT_TIME, (TABLE_SCHEMA||'.'||TABLE_NAME)
+            ORDER BY RUN_DATETIME DESC
+            """
+            exp_rows = sql_to_dataframe(exp_sql)
+            if exp_rows:
+                notifications = notifications + exp_rows
+        except Exception:
+            try:
+                exp_sql_raw = f"""
+                SELECT 
+                  ('EXPECT_' || to_varchar(measurement_time)) AS RUN_KEY,
+                  '' AS JOB_ID,
+                  measurement_time AS RUN_DATETIME,
+                  COUNT(*) AS COUNT,
+                  (resource_attributes:object_schema::string||'.'||resource_attributes:object_name::string) AS CONTROL_TBL_NM,
+                  IFF(SUM(IFF(value::boolean,1,0))>0,1,0) AS ALERT_FLAG,
+                  'EXPECTATION' as CHECK_TYPE,
+                  NULL as ALERT_STATUS
+                FROM SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS_RAW
+                WHERE resource_attributes:snow.data_metric.record_type::string = 'EXPECTATION_VIOLATION_STATUS'
+                  AND (resource_attributes:object_schema::string||'.'||resource_attributes:object_name::string) ILIKE '%{search}%'
+                  AND measurement_time >= CONCAT('{start_date}', ' 00:00:00')::timestamp
+                  AND measurement_time <= CONCAT('{end_date}', ' 23:59:59')::timestamp
+                GROUP BY measurement_time, (resource_attributes:object_schema::string||'.'||resource_attributes:object_name::string)
+                ORDER BY RUN_DATETIME DESC
+                """
+                exp_rows = sql_to_dataframe(exp_sql_raw)
+                if exp_rows:
+                    notifications = notifications + exp_rows
+            except Exception:
+                pass
         st.button("Mark all as read", type="primary", on_click=self.read_all_notes, args=(notifications,))
         st.write("-----")
         # st.write(notifications)

@@ -156,3 +156,54 @@ class Job:
                 st.button("Save", type='primary', on_click=self.save_edits,
                           args=(edited_df, f'{APP_OPP_DB}.{APP_RESULTS_SCHEMA}.DQ_SNOWFLAKE_DMF_RESULTS'),
                           key="save_btn" + str(self.note_id) + str(self.i))
+        elif self.type == 'EXPECTATION':
+            # Expectation violations sourced from SNOWFLAKE.LOCAL views/RAW (read-only)
+            if self.emoji_flag:
+                if self.alert_flag == 0:
+                    message = ':white_check_mark: ***No expectation violations***'
+                elif self.alert_flag == 1:
+                    message = f':x: ***{self.count} expectation violations***'
+            else:
+                message = f'***{self.count} expectation violations***'
+            description.write(f"{message}")
+            if (st.session_state["show_flag" + str(self.note_id)]):
+                # Attempt to show detailed expectation status for the table and time
+                try:
+                    exp_df = sql_to_dataframe(
+                        f"""
+                        select 
+                            TABLE_DATABASE, TABLE_SCHEMA, TABLE_NAME,
+                            METRIC_NAME, ARGUMENT_NAMES,
+                            EXPECTATION_NAME, EXPECTATION_EXPRESSION,
+                            MEASUREMENT_TIME, VIOLATED
+                        from SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_EXPECTATION_STATUS
+                        where (TABLE_SCHEMA||'.'||TABLE_NAME) = '{self.table}'
+                          and MEASUREMENT_TIME = '{self.run_time}'
+                        order by METRIC_NAME
+                        """
+                    )
+                    st.dataframe(exp_df, use_container_width=True)
+                except Exception:
+                    try:
+                        raw_df = sql_to_dataframe(
+                            f"""
+                            select 
+                              resource_attributes:object_database::string as TABLE_DATABASE,
+                              resource_attributes:object_schema::string as TABLE_SCHEMA,
+                              resource_attributes:object_name::string as TABLE_NAME,
+                              resource_attributes:metric_name::string as METRIC_NAME,
+                              resource_attributes:argument_names::string as ARGUMENT_NAMES,
+                              resource_attributes:expectation_name::string as EXPECTATION_NAME,
+                              resource_attributes:expectation_expression::string as EXPECTATION_EXPRESSION,
+                              measurement_time as MEASUREMENT_TIME,
+                              value::boolean as VIOLATED
+                            from SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS_RAW
+                            where resource_attributes:snow.data_metric.record_type::string = 'EXPECTATION_VIOLATION_STATUS'
+                              and (resource_attributes:object_schema::string||'.'||resource_attributes:object_name::string) = '{self.table}'
+                              and measurement_time = '{self.run_time}'
+                            order by METRIC_NAME
+                            """
+                        )
+                        st.dataframe(raw_df, use_container_width=True)
+                    except Exception:
+                        st.info("Cannot load expectation details. Ensure SNOWFLAKE.LOCAL views are accessible.")

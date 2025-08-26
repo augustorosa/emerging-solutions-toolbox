@@ -3,6 +3,59 @@ CREATE SCHEMA DATA_QUALITY.CONFIG;
 CREATE SCHEMA DATA_QUALITY.RESULTS;
 CREATE SCHEMA DATA_QUALITY.TEMPORARY_DQ_OBJECTS;
 
+-- =========================================
+-- Section: Compute and Role Setup (Option A)
+-- Purpose: Create the Streamlit warehouse and an app role with minimum privileges
+-- Note: Run as a high-privileged role (e.g., ACCOUNTADMIN) or adjust grants per your org policies
+-- =========================================
+
+CREATE OR REPLACE WAREHOUSE DEX_WH
+  WAREHOUSE_SIZE = 'XSMALL'
+  AUTO_SUSPEND = 60
+  AUTO_RESUME = TRUE
+  INITIALLY_SUSPENDED = TRUE;
+
+CREATE ROLE IF NOT EXISTS DQ_APP_ROLE;
+GRANT ROLE DQ_APP_ROLE TO ROLE SYSADMIN;
+
+GRANT USAGE ON WAREHOUSE DEX_WH TO ROLE DQ_APP_ROLE;
+GRANT USAGE ON DATABASE DATA_QUALITY TO ROLE DQ_APP_ROLE;
+GRANT USAGE ON SCHEMA DATA_QUALITY.CONFIG TO ROLE DQ_APP_ROLE;
+GRANT USAGE ON SCHEMA DATA_QUALITY.RESULTS TO ROLE DQ_APP_ROLE;
+GRANT USAGE ON SCHEMA DATA_QUALITY.TEMPORARY_DQ_OBJECTS TO ROLE DQ_APP_ROLE;
+
+GRANT SELECT ON ALL TABLES IN SCHEMA DATA_QUALITY.CONFIG TO ROLE DQ_APP_ROLE;
+GRANT SELECT ON ALL TABLES IN SCHEMA DATA_QUALITY.RESULTS TO ROLE DQ_APP_ROLE;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA DATA_QUALITY.CONFIG TO ROLE DQ_APP_ROLE;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA DATA_QUALITY.RESULTS TO ROLE DQ_APP_ROLE;
+
+GRANT USAGE ON DATABASE SNOWFLAKE TO ROLE DQ_APP_ROLE;
+GRANT USAGE ON SCHEMA SNOWFLAKE.LOCAL TO ROLE DQ_APP_ROLE;
+GRANT SELECT ON ALL TABLES IN SCHEMA SNOWFLAKE.LOCAL TO ROLE DQ_APP_ROLE;
+GRANT SELECT ON ALL VIEWS  IN SCHEMA SNOWFLAKE.LOCAL TO ROLE DQ_APP_ROLE;
+
+-- DMF Monitoring Access Note:
+-- The metrics/expectations dashboards in the app read from SNOWFLAKE.LOCAL
+-- (DATA_QUALITY_MONITORING_RESULTS and EXPECTATION_STATUS). The grants above
+-- are required; without them, those tabs will show an informational message.
+
+-- Optional: Quick DMF/Expectation setup example (replace with your objects)
+-- -- Attach a system DMF and an expectation, then schedule it on-table.
+-- ALTER TABLE <DB>.<SCHEMA>.<TABLE>
+--   ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (<COLUMN>)
+--   EXPECTATION NULLS_EQ_ZERO (VALUE = 0);
+-- ALTER TABLE <DB>.<SCHEMA>.<TABLE> SET DATA_METRIC_SCHEDULE = 'USING CRON 0 * * * * UTC';
+-- -- After the first run, SNOWFLAKE.LOCAL will begin to populate.
+
+GRANT USAGE ON DATABASE DATA_QUALITY TO ROLE DQ_APP_ROLE;
+GRANT USAGE ON SCHEMA DATA_QUALITY.CONFIG TO ROLE DQ_APP_ROLE;
+GRANT CREATE STREAMLIT ON SCHEMA DATA_QUALITY.CONFIG TO ROLE DQ_APP_ROLE;
+
+-- Streamlit needs the stage and warehouse
+GRANT READ ON STAGE DATA_QUALITY.CONFIG.CODE TO ROLE DQ_APP_ROLE;
+GRANT WRITE ON STAGE DATA_QUALITY.CONFIG.CODE TO ROLE DQ_APP_ROLE;
+GRANT USAGE ON WAREHOUSE DEX_WH TO ROLE DQ_APP_ROLE;
+
 create or replace TABLE DATA_QUALITY.CONFIG.DQ_CHECK_TYPES (
 	CHECK_TYPE_ID NUMBER(38,0),
 	CHECK_DESCRIPTION VARCHAR(200),
@@ -236,12 +289,35 @@ END;
 CREATE OR REPLACE STAGE DATA_QUALITY.CONFIG.CODE;
 -- Load all files except install to this stage at this point
 
-
-
-
-
-
-
+-- NOTE: Required uploads to @DATA_QUALITY.CONFIG.CODE before creating Python procedures
+--
+-- You must upload these helper modules to the ROOT of the CODE stage (no subfolder):
+--   - utility_functions.py
+--   - utility_functions_non_stat.py
+--
+-- And create two subfolders in the CODE stage that match the paths below, then upload the ZIPs there:
+--   - DATA_QUALITYCONFIGdq_anomaly_detection_sproc_1183842436314279374/
+--       • udf_py_2034220827.zip
+--   - DATA_QUALITYCONFIGdq_non_stat_sproc_8775928960113803498/
+--       • udf_py_994340372.zip
+--
+-- Example SnowSQL PUT commands (adjust local file paths and connection flags):
+--   snowsql <conn> -q "PUT file:///.../utility_functions.py @DATA_QUALITY.CONFIG.CODE AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+--   snowsql <conn> -q "PUT file:///.../utility_functions_non_stat.py @DATA_QUALITY.CONFIG.CODE AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+--   snowsql <conn> -q "PUT file:///.../DATA_QUALITYCONFIGdq_anomaly_detection_sproc_1183842436314279374/udf_py_2034220827.zip @DATA_QUALITY.CONFIG.CODE/DATA_QUALITYCONFIGdq_anomaly_detection_sproc_1183842436314279374 AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+--   snowsql <conn> -q "PUT file:///.../DATA_QUALITYCONFIGdq_non_stat_sproc_8775928960113803498/udf_py_994340372.zip @DATA_QUALITY.CONFIG.CODE/DATA_QUALITYCONFIGdq_non_stat_sproc_8775928960113803498 AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+--
+-- Streamlit application files (must be present for imports like `from src...` to resolve)
+--   Upload the Streamlit entrypoint and the entire src/ package to the CODE stage root:
+--     • streamlit_app.py
+--     • src/*.py (all modules)
+--   Example (SnowSQL):
+--     snowsql <conn> -q "PUT file:///.../streamlit_app.py @DATA_QUALITY.CONFIG.CODE AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+--     snowsql <conn> -q "PUT file:///.../src/*.py @DATA_QUALITY.CONFIG.CODE/src AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+--   Or via Snowsight Stages UI: create a folder named src and upload all .py files into it at the stage root.
+--
+-- You can verify with:
+--   LIST @DATA_QUALITY.CONFIG.CODE PATTERN='.*(utility_functions|utility_functions_non_stat|udf_py_|streamlit_app\.py|src/.*\.py).*';
 
 
 
@@ -268,8 +344,73 @@ EXECUTE AS OWNER
 -- stage for registering temp UDFs
 CREATE OR REPLACE STAGE DATA_QUALITY.TEMPORARY_DQ_OBJECTS.CODE;
 
+USE ROLE DQ_APP_ROLE;
 CREATE OR REPLACE STREAMLIT  DATA_QUALITY.CONFIG.DATA_QUALITY_MANAGER
 ROOT_LOCATION = '@DATA_QUALITY.CONFIG.CODE'
 MAIN_FILE = '/streamlit_app.py'
 QUERY_WAREHOUSE = DEX_WH
 COMMENT = '{"origin": "sf_sit","name": "sit_data_quality_framework","version": "{major: 1, minor: 0}"}';
+
+-- =========================================
+-- Section: Verification & Post-Install Guide (Documentation)
+-- Purpose: Handy commands and notes after installation
+-- =========================================
+
+-- Version prerequisites
+-- * DMFs/Expectations require Snowflake Enterprise Edition or higher.
+-- * Expectation status data is exposed via SNOWFLAKE.LOCAL. Ensure your account has access.
+
+-- Internal stage grants reminder (for CODE stage)
+-- * Use READ/WRITE on internal stages (USAGE does not apply to internal stages):
+--   GRANT READ  ON STAGE DATA_QUALITY.CONFIG.CODE TO ROLE DQ_APP_ROLE;
+--   GRANT WRITE ON STAGE DATA_QUALITY.CONFIG.CODE TO ROLE DQ_APP_ROLE;  -- only if you want uploads
+
+-- Make the role available and create the Streamlit as that role
+--   GRANT ROLE DQ_APP_ROLE TO USER <your_user>;
+--   USE ROLE DQ_APP_ROLE;
+--   USE WAREHOUSE DEX_WH;
+--   -- If not already created by this script, run the CREATE STREAMLIT block above.
+
+-- Point an existing app to a different warehouse (if needed)
+--   ALTER STREAMLIT DATA_QUALITY.CONFIG.DATA_QUALITY_MANAGER SET QUERY_WAREHOUSE = DEX_WH;
+
+-- Transfer app ownership to the app role (optional)
+--   GRANT OWNERSHIP ON STREAMLIT DATA_QUALITY.CONFIG.DATA_QUALITY_MANAGER TO ROLE DQ_APP_ROLE COPY CURRENT GRANTS;
+
+-- Verification commands
+--   SHOW STREAMLITS IN SCHEMA DATA_QUALITY.CONFIG;
+--   DESC STREAMLIT DATA_QUALITY.CONFIG.DATA_QUALITY_MANAGER;
+--   SHOW GRANTS TO ROLE DQ_APP_ROLE;
+--   LIST @DATA_QUALITY.CONFIG.CODE;
+--   SELECT CURRENT_ROLE(), CURRENT_WAREHOUSE(), CURRENT_USER();
+
+-- Quick smoke tests (only if you have appropriate data/specs)
+--   -- Managed DMF run through wrapper (assumes a valid JOB_ID exists):
+--   -- CALL DATA_QUALITY.CONFIG.DMF_WRAPPER(<job_id>);
+--   -- Metadata quality:
+--   -- CALL DATA_QUALITY.CONFIG.METADATA_QUALITY('<db>', '<schema>', '<table>');
+
+-- Troubleshooting (common errors)
+-- * "The specified warehouse <name> does not exist":
+--     - Create warehouse, or ALTER STREAMLIT ... SET QUERY_WAREHOUSE = <existing_wh>.
+--     - Ensure the app owner role has USAGE on the warehouse.
+-- * "Insufficient privileges to operate on schema 'CONFIG'":
+--     - GRANT USAGE ON DATABASE DATA_QUALITY TO ROLE DQ_APP_ROLE;
+--       GRANT USAGE ON SCHEMA DATA_QUALITY.CONFIG TO ROLE DQ_APP_ROLE;
+--       GRANT CREATE STREAMLIT ON SCHEMA DATA_QUALITY.CONFIG TO ROLE DQ_APP_ROLE;
+-- * "Remote file '<path>' was not found":
+--     - LIST @DATA_QUALITY.CONFIG.CODE and match IMPORTS paths exactly (case-sensitive).
+--     - For internal stages, re-upload with AUTO_COMPRESS=FALSE if you expect .py not .py.gz.
+-- * "Cannot grant or revoke USAGE on an internal staging location":
+--     - Use GRANT READ/WRITE ON STAGE instead of USAGE.
+-- * Python import errors in procedures:
+--     - Ensure all required .py or .zip artifacts are referenced in IMPORTS and module names in HANDLER match.
+
+-- Cleanup (optional)
+--   DROP STREAMLIT IF EXISTS DATA_QUALITY.CONFIG.DATA_QUALITY_MANAGER;
+--   DROP STAGE IF EXISTS DATA_QUALITY.TEMPORARY_DQ_OBJECTS.CODE;
+--   DROP STAGE IF EXISTS DATA_QUALITY.CONFIG.CODE;
+--   DROP SCHEMA IF EXISTS DATA_QUALITY.TEMPORARY_DQ_OBJECTS;
+--   DROP SCHEMA IF EXISTS DATA_QUALITY.RESULTS;
+--   DROP SCHEMA IF EXISTS DATA_QUALITY.CONFIG;
+--   DROP DATABASE IF EXISTS DATA_QUALITY;

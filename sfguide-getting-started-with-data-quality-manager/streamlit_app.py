@@ -1,7 +1,16 @@
 import streamlit as st
 import json
 import sys
+import os
 import pandas as pd
+
+# Ensure local app root and src/ are importable in Snowflake Streamlit runtime
+APP_ROOT = os.path.dirname(__file__)
+SRC_PATH = os.path.join(APP_ROOT, "src")
+if APP_ROOT not in sys.path:
+    sys.path.insert(0, APP_ROOT)
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
 
 from src.Main_Page import Main_Page
 from src.Schedule_Check_Page import Schedule_Check_Page
@@ -63,7 +72,8 @@ dates_chron_dict = {
         }
 reverse_chron_dict = inv_map = {v: k for k, v in dates_chron_dict.items()}
 
-if 'snowflake_import_directory' in sys._xoptions:
+_xopts = getattr(sys, "_xoptions", {}) or {}
+if 'snowflake_import_directory' in _xopts:
 
     print("We are in Snowflake.")
 
@@ -85,24 +95,27 @@ st.title("Data Quality Manager")
 
 if "catalog_info" not in st.session_state:
     with st.spinner("Loading Catalog"):
-        databases = ("', '").join(st.session_state.databases)
-        schemas = (f"SELECT CATALOG_NAME, SCHEMA_NAME FROM SNOWFLAKE.ACCOUNT_USAGE.SCHEMATA WHERE CATALOG_NAME in ('{databases}') AND DELETED IS NULL ORDER BY SCHEMA_NAME")
-        schema_df = session.sql(schemas).to_pandas()
-        schemas = ("', '").join(list(schema_df["SCHEMA_NAME"]))
-        tables_df = session.sql(f"SELECT TABLE_NAME, TABLE_SCHEMA FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES WHERE TABLE_CATALOG in ('{databases}') and TABLE_SCHEMA in ('{schemas}') AND DELETED IS NULL ORDER BY TABLE_NAME").to_pandas()
-        database_dict = {}
-        for database in st.session_state.databases:
-            database_dict[database] = []
-            schemas = schema_df[schema_df["CATALOG_NAME"] == database]
-            for index,schema in schemas.iterrows():
-                schema = schema["SCHEMA_NAME"]
-                tables = list(tables_df[tables_df["TABLE_SCHEMA"] == schema]["TABLE_NAME"])
-                new_obj = {
-                    "schema" : schema,
-                    "tables" :tables
-                }
-                database_dict[database].append(new_obj)
-        st.session_state.catalog_info = database_dict
+        try:
+            database_dict = {}
+            for db in st.session_state.databases:
+                database_dict[db] = []
+                try:
+                    sch_df = session.sql(f"SHOW SCHEMAS IN {db}").to_pandas()
+                    # Exclude information_schema
+                    sch_df = sch_df[sch_df["name"].str.lower() != "information_schema"]
+                    for _, row in sch_df.iterrows():
+                        sch = row["name"]
+                        try:
+                            tbl_df = session.sql(f"SHOW TABLES IN {db}.{sch}").to_pandas()
+                            tbls = [str(t).upper() for t in list(tbl_df["name"]) if pd.notna(t)]
+                        except Exception:
+                            tbls = []
+                        database_dict[db].append({"schema": sch, "tables": tbls})
+                except Exception:
+                    database_dict[db].append({"schema": "", "tables": []})
+            st.session_state.catalog_info = database_dict
+        except Exception as e:
+            st.error("Failed to load catalog info. Please check privileges for SHOW SCHEMAS/TABLES.")
 
 
 if 'session' not in st.session_state:
@@ -129,5 +142,9 @@ if "current_page" not in st.session_state:
 
 for page in pages:
     if page.name == st.session_state["current_page"]:
-        page.print_page()
-        page.print_sidebar()
+        try:
+            page.print_page()
+            page.print_sidebar()
+        except Exception as e:
+            st.error("An error occurred while rendering the page. See details below.")
+            st.exception(e)
